@@ -1,0 +1,56 @@
+name: Nix Test Generation Pipeline
+
+on:
+  workflow_dispatch: # Allows you to trigger this manually from the GitHub UI Actions tab
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Initialize Nix on the runner
+      - name: Install Nix
+        uses: cachix/install-nix-action@v25
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      # Step 2: Clone and build the power test tool
+      - name: Clone ngtv2409/powertest
+        uses: actions/checkout@v4
+        with:
+          repository: ngtv2409/powertest
+          path: powertest
+
+      - name: Install powertest binary
+        run: |
+          cd powertest
+          cargo install --path .
+
+      # Step 3: Clone the target eza fork and run the generation tool
+      - name: Clone ngtv2409/eza
+        uses: actions/checkout@v4
+        with:
+          repository: ngtv2409/eza
+          path: eza
+          ref: feat-ignore-glob-case-ins
+
+      - name: Run test regeneration script
+        run: |
+          cd eza
+          rm -rf tests/ptests
+          powertest
+          nix build -L ./#trydump
+          find result/dump -type f \( -name "*.stdout" -o -name "*.stderr" \) -exec sh -c 'base=$(basename {}); if [ -e "tests/ptests/${base%.*}.toml" ]; then cp {} tests/ptests/; fi' \;
+
+      # Step 4: Archive the output files
+      - name: Archive generated tests
+        run: |
+          cd eza
+          tar -cvzf ptests.tar.gz tests/ptests
+
+      # Step 5: Upload the tarball so you can download it from your browser
+      - name: Upload Test Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-ptests
+          path: eza/ptests.tar.gz
